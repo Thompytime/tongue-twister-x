@@ -61,6 +61,7 @@ export default function TongueTwisterX() {
   const [scores, setScores] = useState([]);
   const [recording, setRecording] = useState(false);
   const [permissionError, setPermissionError] = useState("");
+  const [voiceError, setVoiceError] = useState("");
   const recognitionRef = useRef(null);
 
   useEffect(() => {
@@ -73,10 +74,14 @@ export default function TongueTwisterX() {
     recog.lang = currentTwister.locale;
     recog.continuous = false;
     recog.interimResults = false;
+
     recog.onresult = e => {
       const transcript = e.results[0][0].transcript;
       const { score, charSim, wordSim } = similarityScore(currentTwister.text, transcript);
-      setScores(prev => [...prev, { attempt: attempt + 1, transcript, score: Math.round(score * 100), charSim, wordSim }]);
+      setScores(prev => [
+        ...prev,
+        { attempt: attempt + 1, transcript, score: Math.round(score * 100), charSim, wordSim }
+      ]);
       setAttempt(a => a + 1);
       setRecording(false);
     };
@@ -109,9 +114,35 @@ export default function TongueTwisterX() {
   };
 
   const speakNative = () => {
+    setVoiceError("");
     const utter = new SpeechSynthesisUtterance(currentTwister.text);
     utter.lang = currentTwister.locale;
-    speechSynthesis.speak(utter);
+
+    const setVoiceAndSpeak = () => {
+      const voices = speechSynthesis.getVoices();
+      if (!voices.length) {
+        setVoiceError("No speech synthesis voices available on this device.");
+        return;
+      }
+
+      const voice = voices.find(v => v.lang === currentTwister.locale)
+                 || voices.find(v => v.lang.startsWith(currentTwister.locale.split('-')[0]));
+
+      if (!voice) {
+        setVoiceError(`No suitable voice found for ${currentTwister.language}.`);
+        utter.voice = voices[0];
+      } else {
+        utter.voice = voice;
+      }
+
+      speechSynthesis.speak(utter);
+    };
+
+    if (speechSynthesis.getVoices().length) {
+      setVoiceAndSpeak();
+    } else {
+      speechSynthesis.onvoiceschanged = setVoiceAndSpeak;
+    }
   };
 
   return (
@@ -122,13 +153,12 @@ export default function TongueTwisterX() {
       <p style={{ fontWeight: "bold" }}>{currentTwister.text}</p>
 
       {permissionError && <div style={{ color: "red" }}>{permissionError}</div>}
+      {voiceError && <div style={{ color: "orange" }}>{voiceError}</div>}
 
       {attempt === 0 && (
-        <div>
-          <button onClick={startRecording} disabled={recording}>
-            {recording ? "Listening…" : "Warm-up Attempt"}
-          </button>
-        </div>
+        <button onClick={startRecording} disabled={recording}>
+          {recording ? "Listening…" : "Warm-up Attempt"}
+        </button>
       )}
 
       {attempt > 0 && attempt < 6 && (
@@ -145,14 +175,15 @@ export default function TongueTwisterX() {
           <div key={i} style={{ border: "1px solid #ccc", padding: "8px", margin: "8px 0" }}>
             <p><strong>Attempt {s.attempt}:</strong> "{s.transcript}"</p>
             <p>Score: {s.score}%</p>
-            <p>Character similarity: {(s.charSim*100).toFixed(1)}%</p>
-            <p>Word match: {(s.wordSim*100).toFixed(1)}%</p>
+            <p style={{ fontSize: "0.85em", color: "#555" }}>
+              Character similarity: {(s.charSim*100).toFixed(1)}%, Word match: {(s.wordSim*100).toFixed(1)}%
+            </p>
           </div>
         ))}
       </div>
 
       {attempt >= 6 && (
-        <div style={{ padding: "16px", border: "1px solid #000" }}>
+        <div style={{ padding: "16px", border: "1px solid #000", marginTop: "16px" }}>
           <h2>Final Score: {Math.max(...scores.map(s => s.score))}%</h2>
           <p>Come back tomorrow for a new twister!</p>
         </div>
