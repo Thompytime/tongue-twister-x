@@ -1,6 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
 
-// Sample tongue twisters
+/**
+ * TongueTwisterX (ordered cycle, extra languages, Mandarin audio support)
+ *
+ * Put zh-001.mp3 at: public/audio/zh-001.mp3
+ */
+
+// Tongue twisters (ordered list)
 const SAMPLE_TWISTERS = [
   { id: "es-001", language: "Spanish", locale: "es-ES", flag: "🇪🇸", text: "Tres tristes tigres tragaban trigo en un trigal." },
   { id: "en-001", language: "English", locale: "en-US", flag: "🇺🇸", text: "She sells seashells by the seashore." },
@@ -12,49 +18,136 @@ const SAMPLE_TWISTERS = [
   { id: "de-001", language: "German", locale: "de-DE", flag: "🇩🇪", text: "Fischers Fritz fischt frische Fische, frische Fische fischt Fischers Fritz." },
   { id: "pt-001", language: "Portuguese", locale: "pt-PT", flag: "🇵🇹", text: "O rato roeu a roupa do rei de Roma." },
   { id: "fi-001", language: "Finnish", locale: "fi-FI", flag: "🇫🇮", text: "Vesihiisi sihisi hississä." },
-  { id: "pl-001", language: "Polish", locale: "pl-PL", flag: "🇵🇱", text: "Stół z powyłamywanymi nogami." },
+  { id: "pl-001", language: "Polish", locale: "pl-PL", flag: "🇵🇱", text: "Chrząszcz brzmi w trzcinie w Szczebrzeszynie." },
 ];
 
-// ... keep normalizeText, levenshtein, similarityScore as before ...
+// ---------- Helpers ----------
+function normalizeText(s) {
+  if (!s) return "";
+  // Keep Unicode (don’t strip accents for non-Latin scripts); remove only punctuation, normalize spaces
+  return s
+    .toLowerCase()
+    .normalize("NFC")
+    .replace(/[.,!?;:()"“”'’\-—…]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+    }
+  }
+  return dp[m][n];
+}
+
+function similarityScore(target, said) {
+  const A = normalizeText(target);
+  const B = normalizeText(said);
+  if (!A || !B) return { score: 0, charSim: 0, wordSim: 0 };
+
+  const dist = levenshtein(A, B);
+  const maxLen = Math.max(A.length, B.length);
+  const charSim = maxLen ? (1 - dist / maxLen) : 0;
+
+  const ta = new Set(A.split(" "));
+  const ba = B.split(" ");
+  let hit = 0;
+  for (const w of ba) if (ta.has(w)) hit++;
+  const wordSim = ba.length ? hit / ba.length : 0;
+
+  const score = Math.max(0, Math.min(1, 0.7 * charSim + 0.3 * wordSim));
+  return { score, charSim, wordSim };
+}
+
+// ---------- Component ----------
 export default function TongueTwisterX() {
-  const [index, setIndex] = useState(0); // ✅ start at first twister
-  const [currentTwister, setCurrentTwister] = useState(SAMPLE_TWISTERS[0]);
+  // start from the first item (deterministic) — you can make this random if you prefer
+  const [twisterIndex, setTwisterIndex] = useState(0);
+  const currentTwister = SAMPLE_TWISTERS[twisterIndex];
+
   const [attempt, setAttempt] = useState(0);
   const [scores, setScores] = useState([]);
   const [recording, setRecording] = useState(false);
   const [permissionError, setPermissionError] = useState("");
+  const [maxAttempts] = useState(6);
+
   const recognitionRef = useRef(null);
   const audioRef = useRef(null);
 
-  // Update recognition when currentTwister changes
+  // (Re)create SpeechRecognition when the language changes
   useEffect(() => {
-    if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
+    // stop any ongoing TTS
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    // stop and reset HTMLAudio if switching twister
+    if (audioRef.current) {
+      try { audioRef.current.pause(); audioRef.current.currentTime = 0; } catch {}
+      audioRef.current = null;
+    }
+
+    if (!("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
       setPermissionError("SpeechRecognition not supported. Only scoring by text match available.");
+      recognitionRef.current = null;
       return;
     }
+
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recog = new SR();
     recog.lang = currentTwister.locale;
     recog.continuous = false;
     recog.interimResults = false;
-    recog.onresult = e => {
+
+    recog.onresult = (e) => {
       const transcript = e.results[0][0].transcript;
       const { score, charSim, wordSim } = similarityScore(currentTwister.text, transcript);
-      setScores(prev => [...prev, { attempt: attempt + 1, transcript, score: Math.round(score * 100), charSim: Math.round(charSim * 100), wordSim: Math.round(wordSim * 100) }]);
-      setAttempt(a => a + 1);
+      setScores((prev) => [
+        ...prev,
+        {
+          attempt: attempt + 1,
+          transcript,
+          score: Math.round(score * 100),
+          charSim: Math.round(charSim * 100),
+          wordSim: Math.round(wordSim * 100),
+        },
+      ]);
+      setAttempt((a) => a + 1);
       setRecording(false);
     };
-    recog.onerror = e => {
+
+    recog.onerror = (e) => {
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
         setPermissionError("Microphone permission denied. Please allow mic access in your browser settings.");
+      } else if (e.error === "no-speech") {
+        setPermissionError("No speech detected. Try again in a quieter place or move closer to the mic.");
+      } else if (e.error === "network") {
+        setPermissionError("Network issue with recognition service. Check connection and try again.");
       } else {
         setPermissionError(`Speech recognition error: ${e.error}`);
       }
       setRecording(false);
     };
+
     recognitionRef.current = recog;
-  }, [currentTwister, attempt]);
+
+    // cleanup
+    return () => {
+      try { recog.abort(); } catch {}
+    };
+    // Only re-run when the current language changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTwister.locale, currentTwister.id]);
 
   const startRecording = () => {
     if (!recognitionRef.current) {
@@ -73,68 +166,102 @@ export default function TongueTwisterX() {
   };
 
   const playAudio = () => {
+    // Prefer recorded audio if provided (e.g., Mandarin on mobile)
     if (currentTwister.audio) {
-      if (!audioRef.current) audioRef.current = new Audio(currentTwister.audio);
-      audioRef.current.play();
-    } else {
-      const utter = new SpeechSynthesisUtterance(currentTwister.text);
-      utter.lang = currentTwister.locale;
-      speechSynthesis.speak(utter);
+      if (!audioRef.current) {
+        audioRef.current = new Audio(currentTwister.audio);
+      }
+      audioRef.current.play().catch(() => {
+        // fallback to TTS if audio fails
+        speakTTS();
+      });
+      return;
     }
+    // otherwise use speech synthesis
+    speakTTS();
   };
 
-  // ✅ Rotate through all twisters in order
+  const speakTTS = () => {
+    const utter = new SpeechSynthesisUtterance(currentTwister.text);
+    utter.lang = currentTwister.locale;
+
+    // Try to pick a voice that matches the locale (if available)
+    const all = window.speechSynthesis?.getVoices?.() || [];
+    const match = all.find((v) => v.lang?.toLowerCase() === currentTwister.locale.toLowerCase());
+    if (match) utter.voice = match;
+
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utter);
+  };
+
   const newTwister = () => {
-    const nextIndex = (index + 1) % SAMPLE_TWISTERS.length;
-    setIndex(nextIndex);
-    setCurrentTwister(SAMPLE_TWISTERS[nextIndex]);
+    // advance in order and wrap after the last
+    setTwisterIndex((prev) => (prev + 1) % SAMPLE_TWISTERS.length);
     setAttempt(0);
     setScores([]);
     setPermissionError("");
   };
 
+  const styles = {
+    container: { padding: "16px", maxWidth: "560px", margin: "auto", lineHeight: 1.4 },
+    card: { border: "1px solid #ddd", borderRadius: 8, padding: 12, margin: "8px 0" },
+    row: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "8px 0" },
+    button: { padding: "8px 12px", borderRadius: 8, border: "1px solid #999", background: "#f7f7f7", cursor: "pointer" },
+    primary: { background: "#2563eb", color: "white", border: "1px solid #1e40af" },
+    accent: { background: "#16a34a", color: "white", border: "1px solid #14532d" },
+  };
+
   return (
-    <div style={{ padding: "16px", maxWidth: "500px", margin: "auto" }}>
+    <div style={styles.container}>
       <h1>TongueTwisterX</h1>
-      <h2>To play, press the Warm-up Attempt button and then read today's Twister. You have to submit a warm up attempt without being able to hear the tongue twister nor see it broken down phonetically in your own language.</h2>
+      <h2>
+        To play, press the Warm-up Attempt button and then read today's Twister. You have to submit a warm up attempt
+        without being able to hear the tongue twister nor see it broken down phonetically in your own language.
+      </h2>
 
-      <p>Today's Twister ({currentTwister.flag} {currentTwister.language}):</p>
-      <p style={{ fontWeight: "bold" }}>{currentTwister.text}</p>
+      <div style={styles.card}>
+        <p>
+          Today's Twister ({currentTwister.flag} {currentTwister.language}):
+        </p>
+        <p style={{ fontWeight: "bold", fontSize: 18 }}>{currentTwister.text}</p>
+      </div>
 
-      {permissionError && <div style={{ color: "red" }}>{permissionError}</div>}
+      {permissionError && <div style={{ color: "red", margin: "8px 0" }}>{permissionError}</div>}
 
       {attempt === 0 && (
-        <div>
-          <button onClick={startRecording} disabled={recording}>
+        <div style={styles.row}>
+          <button style={{ ...styles.button, ...styles.primary }} onClick={startRecording} disabled={recording}>
             {recording ? "Listening…" : "Warm-up Attempt"}
           </button>
         </div>
       )}
 
-      {attempt > 0 && attempt < 6 && (
-        <div>
-          <button onClick={playAudio} style={{ marginRight: "8px" }}>Hear Native</button>
-          <button onClick={startRecording} disabled={recording}>
-            {recording ? "Listening…" : `Attempt ${attempt + 1}/6`}
+      {attempt > 0 && attempt < maxAttempts && (
+        <div style={styles.row}>
+          <button style={{ ...styles.button, ...styles.accent }} onClick={playAudio}>Hear Native</button>
+          <button style={{ ...styles.button, ...styles.primary }} onClick={startRecording} disabled={recording}>
+            {recording ? "Listening…" : `Attempt ${attempt + 1}/${maxAttempts}`}
           </button>
-          <button onClick={newTwister} style={{ marginLeft: "8px" }}>New Tongue Twister</button>
+          <button style={styles.button} onClick={newTwister}>New Tongue Twister</button>
         </div>
       )}
 
       <div>
         {scores.map((s, i) => (
-          <div key={i} style={{ border: "1px solid #ccc", padding: "8px", margin: "8px 0" }}>
+          <div key={i} style={styles.card}>
             <p><strong>Attempt {s.attempt}:</strong> "{s.transcript}"</p>
-            <p>Score: {s.score}% (Characters: {s.charSim}%, Words: {s.wordSim}%)</p>
+            <p>Score: {s.score}% <small>(Characters: {s.charSim}%, Words: {s.wordSim}%)</small></p>
           </div>
         ))}
       </div>
 
-      {attempt >= 6 && (
-        <div style={{ padding: "16px", border: "1px solid #000" }}>
+      {attempt >= maxAttempts && (
+        <div style={styles.card}>
           <h2>Final Score: {Math.max(...scores.map(s => s.score))}%</h2>
           <p>Come back tomorrow for a new twister!</p>
-          <button onClick={newTwister}>Try a New Tongue Twister</button>
+          <div style={styles.row}>
+            <button style={styles.button} onClick={newTwister}>Try a New Tongue Twister</button>
+          </div>
         </div>
       )}
     </div>
