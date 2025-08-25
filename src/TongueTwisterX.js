@@ -11,14 +11,15 @@ const SAMPLE_TWISTERS = [
 
 // Helper functions
 function normalizeText(s) {
-  return (s || "")
+  if (!s) return "";
+  return s
     .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^\p{L}\p{N}\s]/gu, "")
+    .normalize("NFC")       // keep composed form for Indic scripts
+    .replace(/[.,!?;:]/g, "") // only remove punctuation
     .replace(/\s+/g, " ")
     .trim();
 }
+
 
 function levenshtein(a, b) {
   const m = a.length, n = b.length;
