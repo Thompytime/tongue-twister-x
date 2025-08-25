@@ -5,59 +5,21 @@ const SAMPLE_TWISTERS = [
   { id: "es-001", language: "Spanish", locale: "es-ES", flag: "🇪🇸", text: "Tres tristes tigres tragaban trigo en un trigal." },
   { id: "en-001", language: "English", locale: "en-US", flag: "🇺🇸", text: "She sells seashells by the seashore." },
   { id: "fr-001", language: "French", locale: "fr-FR", flag: "🇫🇷", text: "Un chasseur sachant chasser sait chasser sans son chien." },
-  { id: "hi-001", language: "Hindi", locale: "hi-IN", flag: "🇮🇳", text: "Kacchā pāpṛā pakā pāpṛā." },
+  { id: "hi-001", language: "Hindi", locale: "hi-IN", flag: "🇮🇳", text: "कच्चा पापड़ा पका पापड़ा।" },
   { id: "zh-001", language: "Mandarin", locale: "zh-CN", flag: "🇨🇳", text: "四是四，十是十，十四是十四，四十是四十。", audio: "/audio/zh-001.mp3" },
+  { id: "it-001", language: "Italian", locale: "it-IT", flag: "🇮🇹", text: "Trentatré trentini entrarono a Trento, tutti e trentatré trotterellando." },
+  { id: "nl-001", language: "Dutch", locale: "nl-NL", flag: "🇳🇱", text: "De kat krabt de krullen van de trap." },
+  { id: "de-001", language: "German", locale: "de-DE", flag: "🇩🇪", text: "Fischers Fritz fischt frische Fische, frische Fische fischt Fischers Fritz." },
+  { id: "pt-001", language: "Portuguese", locale: "pt-PT", flag: "🇵🇹", text: "O rato roeu a roupa do rei de Roma." },
+  { id: "fi-001", language: "Finnish", locale: "fi-FI", flag: "🇫🇮", text: "Vesihiisi sihisi hississä." },
+  { id: "pl-001", language: "Polish", locale: "pl-PL", flag: "🇵🇱", text: "Stół z powyłamywanymi nogami." },
 ];
 
-// Helper functions
-function normalizeText(s) {
-  if (!s) return "";
-  return s
-    .toLowerCase()
-    .normalize("NFC")       // keep composed form for Indic scripts
-    .replace(/[.,!?;:]/g, "") // only remove punctuation
-    .replace(/\s+/g, " ")
-    .trim();
-}
+// ... keep normalizeText, levenshtein, similarityScore as before ...
 
-
-function levenshtein(a, b) {
-  const m = a.length, n = b.length;
-  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-  for (let i = 0; i <= m; i++) dp[i][0] = i;
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
-    }
-  }
-  return dp[m][n];
-}
-
-function similarityScore(target, said) {
-  const A = normalizeText(target);
-  const B = normalizeText(said);
-  if (!A || !B) return { score: 0, charSim: 0, wordSim: 0 };
-
-  const dist = levenshtein(A, B);
-  const maxLen = Math.max(A.length, B.length);
-  const charSim = 1 - dist / maxLen;
-
-  const ta = new Set(A.split(" "));
-  const ba = B.split(" ");
-  let hit = 0;
-  for (const w of ba) if (ta.has(w)) hit++;
-  const wordSim = ba.length ? hit / ba.length : 0;
-
-  const score = Math.max(0, Math.min(1, 0.7 * charSim + 0.3 * wordSim));
-
-  return { score, charSim, wordSim };
-}
-
-// Main component
 export default function TongueTwisterX() {
-  const [currentTwister, setCurrentTwister] = useState(() => SAMPLE_TWISTERS[Math.floor(Math.random() * SAMPLE_TWISTERS.length)]);
+  const [index, setIndex] = useState(0); // ✅ start at first twister
+  const [currentTwister, setCurrentTwister] = useState(SAMPLE_TWISTERS[0]);
   const [attempt, setAttempt] = useState(0);
   const [scores, setScores] = useState([]);
   const [recording, setRecording] = useState(false);
@@ -65,7 +27,7 @@ export default function TongueTwisterX() {
   const recognitionRef = useRef(null);
   const audioRef = useRef(null);
 
-  // Initialize SpeechRecognition
+  // Update recognition when currentTwister changes
   useEffect(() => {
     if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
       setPermissionError("SpeechRecognition not supported. Only scoring by text match available.");
@@ -121,9 +83,11 @@ export default function TongueTwisterX() {
     }
   };
 
+  // ✅ Rotate through all twisters in order
   const newTwister = () => {
-    const nextTwister = SAMPLE_TWISTERS[Math.floor(Math.random() * SAMPLE_TWISTERS.length)];
-    setCurrentTwister(nextTwister);
+    const nextIndex = (index + 1) % SAMPLE_TWISTERS.length;
+    setIndex(nextIndex);
+    setCurrentTwister(SAMPLE_TWISTERS[nextIndex]);
     setAttempt(0);
     setScores([]);
     setPermissionError("");
