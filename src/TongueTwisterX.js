@@ -24,12 +24,7 @@ const SAMPLE_TWISTERS = [
 // ---------- Helpers ----------
 function normalizeText(s) {
   if (!s) return "";
-  return s
-    .toLowerCase()
-    .normalize("NFC")
-    .replace(/[.,!?;:()"“”'’\-—…]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return s.toLowerCase().normalize("NFC").replace(/[.,!?;:()"“”'’\-—…]/g, "").replace(/\s+/g, " ").trim();
 }
 
 function levenshtein(a, b) {
@@ -73,12 +68,15 @@ export default function TongueTwisterX() {
   const [attempt, setAttempt] = useState(0);
   const [scores, setScores] = useState([]);
   const [recording, setRecording] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("");
   const [permissionError, setPermissionError] = useState("");
   const [maxAttempts] = useState(6);
 
   const recognitionRef = useRef(null);
   const audioRef = useRef(null);
+  const timeoutRef = useRef(null);
 
+  // Setup recognition
   useEffect(() => {
     if (window.speechSynthesis) window.speechSynthesis.cancel();
     if (audioRef.current) { try { audioRef.current.pause(); audioRef.current.currentTime = 0; } catch {} audioRef.current = null; }
@@ -96,34 +94,60 @@ export default function TongueTwisterX() {
     recog.interimResults = false;
 
     recog.onresult = (e) => {
+      clearTimeout(timeoutRef.current);
       const transcript = e.results[0][0].transcript;
       const { score, charSim, wordSim } = similarityScore(currentTwister.text, transcript);
       setScores((prev) => [...prev, { attempt: attempt + 1, transcript, score: Math.round(score*100), charSim: Math.round(charSim*100), wordSim: Math.round(wordSim*100) }]);
       setAttempt((a) => a + 1);
       setRecording(false);
+      setStatusMessage("");
     };
 
     recog.onerror = (e) => {
+      clearTimeout(timeoutRef.current);
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
         setPermissionError("Microphone permission denied.");
       } else if (e.error === "no-speech") {
-        setPermissionError("No speech detected.");
+        setStatusMessage("No speech detected.");
       } else if (e.error === "network") {
-        setPermissionError("Network issue with recognition service.");
-      } else {
-        if (e.error !== "aborted") setPermissionError(`Speech recognition error: ${e.error}`);
+        setStatusMessage("Network issue with recognition service.");
+      } else if (e.error !== "aborted") {
+        setStatusMessage(`Speech recognition error: ${e.error}`);
       }
       setRecording(false);
     };
 
+    recog.onend = () => { 
+      clearTimeout(timeoutRef.current); 
+      if (recording) { setRecording(false); setStatusMessage("Listening stopped."); } 
+    };
+
     recognitionRef.current = recog;
-    return () => { try { recog.abort(); } catch {} };
-  }, [currentTwister.locale, currentTwister.id]);
+    return () => { try { recog.abort(); clearTimeout(timeoutRef.current); } catch {} };
+  }, [currentTwister.locale, currentTwister.id, attempt, recording]);
 
   const startRecording = () => {
     if (!recognitionRef.current) { setPermissionError("SpeechRecognition not available."); return; }
-    try { setRecording(true); setPermissionError(""); recognitionRef.current.start(); } 
-    catch (e) { console.error(e); setPermissionError("Mic access failed."); setRecording(false); }
+    try {
+      setRecording(true);
+      setPermissionError("");
+      setStatusMessage("Listening...");
+      recognitionRef.current.start();
+
+      // Timeout after 12s
+      timeoutRef.current = setTimeout(() => {
+        if (recording) {
+          try { recognitionRef.current.abort(); } catch {}
+          setRecording(false);
+          setStatusMessage("Timed out. Please try again.");
+        }
+      }, 12000);
+    } catch (e) {
+      console.error(e);
+      setPermissionError("Mic access failed.");
+      setRecording(false);
+      setStatusMessage("");
+    }
   };
 
   const playAudio = () => {
@@ -150,6 +174,7 @@ export default function TongueTwisterX() {
     setAttempt(0);
     setScores([]);
     setPermissionError("");
+    setStatusMessage("");
   };
 
   const styles = { container: { padding: 16, maxWidth: 560, margin: "auto", lineHeight: 1.4 }, card: { border: "1px solid #ddd", borderRadius: 8, padding: 12, margin: "8px 0" }, row: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "8px 0" }, button: { padding: "8px 12px", borderRadius: 8, border: "1px solid #999", background: "#f7f7f7", cursor: "pointer" }, primary: { background: "#2563eb", color: "white", border: "1px solid #1e40af" }, accent: { background: "#16a34a", color: "white", border: "1px solid #14532d" } };
@@ -165,6 +190,7 @@ export default function TongueTwisterX() {
       </div>
 
       {permissionError && <div style={{ color: "red", margin: "8px 0" }}>{permissionError}</div>}
+      {statusMessage && <div style={{ color: "blue", margin: "8px 0" }}>{statusMessage}</div>}
 
       {attempt === 0 && (
         <div style={styles.row}>
