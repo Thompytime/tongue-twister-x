@@ -119,15 +119,26 @@ export default function TongueTwisterX() {
 
     recog.onend = () => { 
       clearTimeout(timeoutRef.current); 
-      if (recording) { setRecording(false); setStatusMessage("Listening stopped."); } 
+      setRecording(false); 
+      if (statusMessage === "Listening...") setStatusMessage("Listening stopped."); 
     };
 
     recognitionRef.current = recog;
     return () => { try { recog.abort(); clearTimeout(timeoutRef.current); } catch {} };
-  }, [currentTwister.locale, currentTwister.id, attempt, recording]);
+  }, [currentTwister.locale, currentTwister.id, attempt]);
 
   const startRecording = () => {
     if (!recognitionRef.current) { setPermissionError("SpeechRecognition not available."); return; }
+
+    if (recording) {
+      // Stop if already recording
+      try { recognitionRef.current.abort(); } catch {}
+      setRecording(false);
+      setStatusMessage("Recording stopped.");
+      clearTimeout(timeoutRef.current);
+      return;
+    }
+
     try {
       setRecording(true);
       setPermissionError("");
@@ -192,23 +203,23 @@ export default function TongueTwisterX() {
       {permissionError && <div style={{ color: "red", margin: "8px 0" }}>{permissionError}</div>}
       {statusMessage && <div style={{ color: "blue", margin: "8px 0" }}>{statusMessage}</div>}
 
-      {attempt === 0 && (
-        <div style={styles.row}>
-          <button style={{ ...styles.button, ...styles.primary }} onClick={startRecording} disabled={recording}>
-            {recording ? "Listening…" : "Warm-up Attempt"}
+      <div style={styles.row}>
+        {attempt === 0 && (
+          <button style={{ ...styles.button, ...styles.primary }} onClick={startRecording}>
+            {recording ? "Stop Listening" : "Warm-up Attempt"}
           </button>
-        </div>
-      )}
+        )}
 
-      {attempt > 0 && attempt < maxAttempts && (
-        <div style={styles.row}>
-          <button style={{ ...styles.button, ...styles.accent }} onClick={playAudio}>Hear Native</button>
-          <button style={{ ...styles.button, ...styles.primary }} onClick={startRecording} disabled={recording}>
-            {recording ? "Listening…" : `Attempt ${attempt + 1}/${maxAttempts}`}
-          </button>
-          <button style={styles.button} onClick={newTwister}>New Tongue Twister</button>
-        </div>
-      )}
+        {attempt > 0 && attempt < maxAttempts && (
+          <>
+            <button style={{ ...styles.button, ...styles.accent }} onClick={playAudio}>Hear Native</button>
+            <button style={{ ...styles.button, ...styles.primary }} onClick={startRecording}>
+              {recording ? "Stop Listening" : `Attempt ${attempt + 1}/${maxAttempts}`}
+            </button>
+            <button style={styles.button} onClick={newTwister}>New Tongue Twister</button>
+          </>
+        )}
+      </div>
 
       <div>
         {scores.map((s, i) => (
