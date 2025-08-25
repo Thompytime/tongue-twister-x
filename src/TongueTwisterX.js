@@ -24,7 +24,6 @@ const SAMPLE_TWISTERS = [
 // ---------- Helpers ----------
 function normalizeText(s) {
   if (!s) return "";
-  // Keep Unicode (don’t strip accents for non-Latin scripts); remove only punctuation, normalize spaces
   return s
     .toLowerCase()
     .normalize("NFC")
@@ -41,11 +40,7 @@ function levenshtein(a, b) {
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      dp[i][j] = Math.min(
-        dp[i - 1][j] + 1,
-        dp[i][j - 1] + 1,
-        dp[i - 1][j - 1] + cost
-      );
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
     }
   }
   return dp[m][n];
@@ -72,7 +67,6 @@ function similarityScore(target, said) {
 
 // ---------- Component ----------
 export default function TongueTwisterX() {
-  // start from the first item (deterministic) — you can make this random if you prefer
   const [twisterIndex, setTwisterIndex] = useState(0);
   const currentTwister = SAMPLE_TWISTERS[twisterIndex];
 
@@ -85,20 +79,12 @@ export default function TongueTwisterX() {
   const recognitionRef = useRef(null);
   const audioRef = useRef(null);
 
-  // (Re)create SpeechRecognition when the language changes
   useEffect(() => {
-    // stop any ongoing TTS
-    if (window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-    }
-    // stop and reset HTMLAudio if switching twister
-    if (audioRef.current) {
-      try { audioRef.current.pause(); audioRef.current.currentTime = 0; } catch {}
-      audioRef.current = null;
-    }
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    if (audioRef.current) { try { audioRef.current.pause(); audioRef.current.currentTime = 0; } catch {} audioRef.current = null; }
 
     if (!("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
-      setPermissionError("SpeechRecognition not supported. Only scoring by text match available.");
+      setPermissionError("SpeechRecognition not supported.");
       recognitionRef.current = null;
       return;
     }
@@ -112,117 +98,69 @@ export default function TongueTwisterX() {
     recog.onresult = (e) => {
       const transcript = e.results[0][0].transcript;
       const { score, charSim, wordSim } = similarityScore(currentTwister.text, transcript);
-      setScores((prev) => [
-        ...prev,
-        {
-          attempt: attempt + 1,
-          transcript,
-          score: Math.round(score * 100),
-          charSim: Math.round(charSim * 100),
-          wordSim: Math.round(wordSim * 100),
-        },
-      ]);
+      setScores((prev) => [...prev, { attempt: attempt + 1, transcript, score: Math.round(score*100), charSim: Math.round(charSim*100), wordSim: Math.round(wordSim*100) }]);
       setAttempt((a) => a + 1);
       setRecording(false);
     };
 
     recog.onerror = (e) => {
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-        setPermissionError("Microphone permission denied. Please allow mic access in your browser settings.");
+        setPermissionError("Microphone permission denied.");
       } else if (e.error === "no-speech") {
-        setPermissionError("No speech detected. Try again in a quieter place or move closer to the mic.");
+        setPermissionError("No speech detected.");
       } else if (e.error === "network") {
-        setPermissionError("Network issue with recognition service. Check connection and try again.");
+        setPermissionError("Network issue with recognition service.");
       } else {
-        setPermissionError(`Speech recognition error: ${e.error}`);
+        if (e.error !== "aborted") setPermissionError(`Speech recognition error: ${e.error}`);
       }
       setRecording(false);
     };
 
     recognitionRef.current = recog;
-
-    // cleanup
-    return () => {
-      try { recog.abort(); } catch {}
-    };
-    // Only re-run when the current language changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { try { recog.abort(); } catch {} };
   }, [currentTwister.locale, currentTwister.id]);
 
   const startRecording = () => {
-    if (!recognitionRef.current) {
-      setPermissionError("SpeechRecognition not available in this browser.");
-      return;
-    }
-    try {
-      setRecording(true);
-      setPermissionError("");
-      recognitionRef.current.start();
-    } catch (e) {
-      console.error(e);
-      setPermissionError("Mic access failed. Ensure you're on HTTPS and allow microphone permissions.");
-      setRecording(false);
-    }
+    if (!recognitionRef.current) { setPermissionError("SpeechRecognition not available."); return; }
+    try { setRecording(true); setPermissionError(""); recognitionRef.current.start(); } 
+    catch (e) { console.error(e); setPermissionError("Mic access failed."); setRecording(false); }
   };
 
   const playAudio = () => {
-    // Prefer recorded audio if provided (e.g., Mandarin on mobile)
     if (currentTwister.audio) {
-      if (!audioRef.current) {
-        audioRef.current = new Audio(currentTwister.audio);
-      }
-      audioRef.current.play().catch(() => {
-        // fallback to TTS if audio fails
-        speakTTS();
-      });
+      if (!audioRef.current) audioRef.current = new Audio(currentTwister.audio);
+      audioRef.current.play().catch(() => speakTTS());
       return;
     }
-    // otherwise use speech synthesis
     speakTTS();
   };
 
   const speakTTS = () => {
     const utter = new SpeechSynthesisUtterance(currentTwister.text);
     utter.lang = currentTwister.locale;
-
-    // Try to pick a voice that matches the locale (if available)
     const all = window.speechSynthesis?.getVoices?.() || [];
     const match = all.find((v) => v.lang?.toLowerCase() === currentTwister.locale.toLowerCase());
     if (match) utter.voice = match;
-
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utter);
   };
 
   const newTwister = () => {
-    // advance in order and wrap after the last
     setTwisterIndex((prev) => (prev + 1) % SAMPLE_TWISTERS.length);
     setAttempt(0);
     setScores([]);
     setPermissionError("");
   };
 
-  const styles = {
-    container: { padding: "16px", maxWidth: "560px", margin: "auto", lineHeight: 1.4 },
-    card: { border: "1px solid #ddd", borderRadius: 8, padding: 12, margin: "8px 0" },
-    row: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "8px 0" },
-    button: { padding: "8px 12px", borderRadius: 8, border: "1px solid #999", background: "#f7f7f7", cursor: "pointer" },
-    primary: { background: "#2563eb", color: "white", border: "1px solid #1e40af" },
-    accent: { background: "#16a34a", color: "white", border: "1px solid #14532d" },
-  };
+  const styles = { container: { padding: 16, maxWidth: 560, margin: "auto", lineHeight: 1.4 }, card: { border: "1px solid #ddd", borderRadius: 8, padding: 12, margin: "8px 0" }, row: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "8px 0" }, button: { padding: "8px 12px", borderRadius: 8, border: "1px solid #999", background: "#f7f7f7", cursor: "pointer" }, primary: { background: "#2563eb", color: "white", border: "1px solid #1e40af" }, accent: { background: "#16a34a", color: "white", border: "1px solid #14532d" } };
 
   return (
     <div style={styles.container}>
       <h1>TongueTwisterX</h1>
-      <h2>
-        To play, press the Warm-up Attempt button and then read today's Twister. You have to submit a warm up attempt
-        without being able to hear the tongue twister nor see it broken down phonetically in your own language.
-      </h2>
+      <h2>To play, press the Warm-up Attempt button and then read today's Twister. You have to submit a warm up attempt without being able to hear the tongue twister nor see it broken down phonetically in your own language.</h2>
 
       <div style={styles.card}>
-        <p>
-          Today's Twister ({currentTwister.flag} {currentTwister.language}):
-        </p>
+        <p>Today's Twister ({currentTwister.flag} {currentTwister.language}):</p>
         <p style={{ fontWeight: "bold", fontSize: 18 }}>{currentTwister.text}</p>
       </div>
 
